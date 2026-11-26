@@ -23,6 +23,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -250,16 +251,24 @@ private fun OtpField(
     val currentValue by rememberUpdatedState(value)
     val currentOnChange by rememberUpdatedState(onChange)
 
+    fun takeFromClipboard() {
+        val code = clipboardOtp(context) ?: return
+        if (code != pasted && code != currentValue) {
+            pasted = code
+            currentOnChange(code)
+        }
+    }
     // Android ne laisse lire le presse-papiers qu'à l'application qui a le focus : on attend donc que la fenêtre
     // l'ait (au premier affichage comme au retour depuis Bitwarden).
     LaunchedEffect(Unit) {
-        snapshotFlow { windowInfo.isWindowFocused }.filter { it }.collect {
-            val code = clipboardOtp(context) ?: return@collect
-            if (code != pasted && code != currentValue) {
-                pasted = code
-                currentOnChange(code)
-            }
-        }
+        snapshotFlow { windowInfo.isWindowFocused }.filter { it }.collect { takeFromClipboard() }
+    }
+    // Code copié sans quitter Sillon (bulle ou suggestion du gestionnaire de mots de passe, notification) : repris aussi.
+    DisposableEffect(Unit) {
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        val listener = ClipboardManager.OnPrimaryClipChangedListener { takeFromClipboard() }
+        clipboard?.addPrimaryClipChangedListener(listener)
+        onDispose { clipboard?.removePrimaryClipChangedListener(listener) }
     }
     LaunchedEffect(autoFocus) { if (autoFocus) runCatching { focus.requestFocus() } }
 
