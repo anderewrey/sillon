@@ -723,6 +723,9 @@ class SynoClient(val creds: Credentials) {
         private const val FILE_NOT_FOUND = 408
         private const val ERROR_OTP_REQUIRED = 403
 
+        /** Code d'erreur DSM signifiant que la session a expiré ou n'est plus valable. */
+        fun isSessionError(code: Int): Boolean = code in SESSION_ERRORS
+
         /** Clé de cache stable pour une URL : on retire le sid, qui change à chaque connexion. */
         fun stableKey(url: String): String =
             runCatching { url.toHttpUrl().newBuilder().removeAllQueryParameters("_sid").build().toString() }

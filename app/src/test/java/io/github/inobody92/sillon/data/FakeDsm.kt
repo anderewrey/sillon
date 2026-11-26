@@ -3,6 +3,7 @@ package io.github.inobody92.sillon.data
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
+import okio.Buffer
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLDecoder
@@ -22,6 +23,16 @@ class FakeDsm : Dispatcher() {
     var expireSessionTimes = 0
 
     var sidCounter = 0
+
+    /** Pochettes servies par `cover.cgi` : `song:<id>` ou `album:<nom>|<artiste>` -> octets de l'image. */
+    val covers = mutableMapOf<String, ByteArray>()
+
+    /** Sid refusé par `cover.cgi` (session révoquée côté NAS) jusqu'au prochain login. */
+    var revokedSid: String? = null
+
+    /** Nombre de requêtes reçues par `cover.cgi` et de logins réussis ou non. */
+    @Volatile var coverRequests = 0
+    @Volatile var logins = 0
     val requests = mutableListOf<Map<String, String>>()
 
     /** Playlists : id -> (nom, titres dans l'ordre). */
@@ -41,6 +52,7 @@ class FakeDsm : Dispatcher() {
     override fun dispatch(request: RecordedRequest): MockResponse {
         val path = request.path.orEmpty()
         if (path.startsWith("/webapi/query.cgi")) return ok(discovery())
+        if (path.startsWith("/webapi/AudioStation/cover.cgi")) return cover(request)
         val params = parse(request.body.readUtf8())
         requests += params
         return when (params["api"]) {
@@ -55,8 +67,30 @@ class FakeDsm : Dispatcher() {
         return JSONObject().put("success", true).put("data", data)
     }
 
+    /** `cover.cgi` en GET : l'image si le sid est le dernier délivré, sinon l'erreur 119 en JSON (statut 200). */
+    @Synchronized
+    private fun cover(request: RecordedRequest): MockResponse {
+        coverRequests++
+        val url = request.requestUrl ?: return ok(error(101))
+        val sid = url.queryParameter("_sid")
+        if (expireSessionTimes > 0) {
+            expireSessionTimes--
+            return ok(error(119))
+        }
+        if (sid == null || sid != "SID$sidCounter" || sid == revokedSid) return ok(error(119))
+        val key = when (url.queryParameter("method")) {
+            "getsongcover" -> "song:" + url.queryParameter("id")
+            "getcover" -> "album:" + url.queryParameter("album_name") + "|" + url.queryParameter("album_artist_name")
+            else -> return ok(error(103))
+        }
+        val bytes = covers[key] ?: return ok(error(103))
+        return MockResponse().setHeader("Content-Type", "image/jpeg").setBody(Buffer().write(bytes))
+    }
+
+    @Synchronized
     private fun auth(p: Map<String, String>): MockResponse {
         if (p["method"] == "logout") return ok(success(JSONObject()))
+        logins++
         if (p["passwd"] != password) return ok(error(400))
         if (otp != null && p["otp_code"] != otp && p["device_id"] == null) return ok(error(403))
         sidCounter++

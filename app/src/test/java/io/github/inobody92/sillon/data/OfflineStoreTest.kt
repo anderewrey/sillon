@@ -119,4 +119,18 @@ class OfflineStoreTest {
         assertEquals(OfflineStore.coverKey(a), OfflineStore.coverKey(b))
         assertTrue(OfflineStore.coverKey(a) != OfflineStore.coverKey(c))
     }
+
+    @Test fun laCleDePochetteDeLAlbumEstCelleDeSesTitres() {
+        val s = song("a", album = "X")
+        assertEquals(OfflineStore.coverKey(s), OfflineStore.coverKey(Album("X", "Artiste", "Autre", 2020)))
+        assertNull(OfflineStore.coverKey(Album("", "Artiste", "Artiste", 0)))
+    }
+
+    @Test fun laPochetteHorsLigneSeRetrouveParSaCle() {
+        val s = song("a", album = "X")
+        OfflineStore.coverFile(s).writeText("jpeg")
+        assertEquals(OfflineStore.coverFile(s), OfflineStore.coverFileForKey(OfflineStore.coverKey(s)))
+        assertNull(OfflineStore.coverFileForKey("../index"))
+        assertNull(OfflineStore.coverFileForKey("ffffff00"))
+    }
 }
