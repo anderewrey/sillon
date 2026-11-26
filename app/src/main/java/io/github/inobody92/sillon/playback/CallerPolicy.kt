@@ -13,7 +13,11 @@ enum class CallerClass {
     /** Sillon lui-même (interface, notification Media3). */
     SELF,
 
-    /** Le système, ou une application qu'Android autorise à contrôler les médias (MEDIA_CONTENT_CONTROL, écouteur de notifications). */
+    /**
+     * Le système (UID système ou application signée par la plateforme, comme le lecteur multimédia d'Android
+     * Automotive OS, dont la signature dépend du constructeur), ou une application qu'Android autorise à contrôler
+     * les médias (MEDIA_CONTENT_CONTROL, écouteur de notifications).
+     */
     TRUSTED,
 
     /** Une application connue (Android Auto, Assistant, Wear OS), vérifiée par son certificat de signature. */
@@ -37,10 +41,16 @@ class CallerPolicy(private val context: Context) {
         return when {
             uid == Process.myUid() -> CallerClass.SELF
             controller.isTrusted -> CallerClass.TRUSTED
+            uid >= 0 && isSystem(uid) -> CallerClass.TRUSTED
             uid >= 0 && isKnown(uid) -> CallerClass.KNOWN
             else -> CallerClass.UNKNOWN
         }
     }
+
+    /** Recommandé par Google pour Android Automotive OS : accepter l'UID système et les applications de la plateforme. */
+    private fun isSystem(uid: Int): Boolean =
+        uid == Process.SYSTEM_UID ||
+            context.packageManager.checkSignatures(uid, Process.SYSTEM_UID) == PackageManager.SIGNATURE_MATCH
 
     private fun isKnown(uid: Int): Boolean {
         val pm = context.packageManager
