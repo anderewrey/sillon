@@ -1,5 +1,8 @@
 package io.github.inobody92.sillon.ui
 
+import android.content.ClipboardManager
+import android.content.Context
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,24 +15,36 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.filter
 
 @Composable
 fun LoginScreen(
@@ -84,7 +99,7 @@ fun LoginScreen(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(12.dp))
-                OtpField(otp, onChange = { otp = it }, onDone = {
+                OtpField(otp, onChange = { otp = it }, autoFocus = true, onDone = {
                     if (otp.length >= 6) onLogin(initialUrl, initialAccount, "", initialInsecure, otp)
                 })
             }
@@ -121,7 +136,7 @@ fun LoginScreen(
                 onValueChange = { account = it },
                 label = { Text("Compte") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().semantics { contentType = ContentType.Username },
             )
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
@@ -131,7 +146,7 @@ fun LoginScreen(
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().semantics { contentType = ContentType.Password },
             )
             if (state.otpRequired) {
                 Spacer(Modifier.height(12.dp))
@@ -205,8 +220,36 @@ fun LoginScreen(
     }
 }
 
+/**
+ * Champ du code à deux facteurs. Deux façons de ne pas le taper :
+ * - marqué comme code d'application d'authentification, pour que le remplissage automatique (Bitwarden et autres
+ *   gestionnaires de mots de passe) puisse le proposer ;
+ * - un code copié (6 à 8 chiffres) est repris du presse-papiers dès qu'on revient dans l'application : on copie le
+ *   code dans Bitwarden, on revient, il est déjà là.
+ */
 @Composable
-private fun OtpField(value: String, onChange: (String) -> Unit, onDone: () -> Unit) {
+private fun OtpField(value: String, onChange: (String) -> Unit, onDone: () -> Unit, autoFocus: Boolean = false) {
+    val context = LocalContext.current
+    val windowInfo = LocalWindowInfo.current
+    val focus = remember { FocusRequester() }
+    // Dernier code repris du presse-papiers : on ne le remet pas une seconde fois (s'il a été refusé, par exemple).
+    var pasted by rememberSaveable { mutableStateOf<String?>(null) }
+    val currentValue by rememberUpdatedState(value)
+    val currentOnChange by rememberUpdatedState(onChange)
+
+    // Android ne laisse lire le presse-papiers qu'à l'application qui a le focus : on attend donc que la fenêtre
+    // l'ait (au premier affichage comme au retour depuis Bitwarden).
+    LaunchedEffect(Unit) {
+        snapshotFlow { windowInfo.isWindowFocused }.filter { it }.collect {
+            val code = clipboardOtp(context) ?: return@collect
+            if (code != pasted && code != currentValue) {
+                pasted = code
+                currentOnChange(code)
+            }
+        }
+    }
+    LaunchedEffect(autoFocus) { if (autoFocus) runCatching { focus.requestFocus() } }
+
     OutlinedTextField(
         value = value,
         onValueChange = { onChange(it.filter(Char::isDigit).take(8)) },
@@ -214,9 +257,33 @@ private fun OtpField(value: String, onChange: (String) -> Unit, onDone: () -> Un
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(focus)
+            .semantics { contentType = ContentType(AUTOFILL_HINT_2FA_APP_OTP) },
     )
+    if (pasted != null && value == pasted) {
+        Text(
+            "Code repris du presse-papiers",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 16.dp, top = 4.dp),
+        )
+    }
 }
+
+/** Code à deux facteurs dans le presse-papiers (6 à 8 chiffres, espaces tolérés : « 123 456 »), sinon null. */
+private fun clipboardOtp(context: Context): String? = runCatching {
+    val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return null
+    val clip = clipboard.primaryClip?.takeIf { it.itemCount > 0 } ?: return null
+    val text = clip.getItemAt(0).coerceToText(context)?.toString() ?: return null
+    text.filterNot(Char::isWhitespace).takeIf { OTP_PATTERN.matches(it) }
+}.getOrNull()
+
+private val OTP_PATTERN = Regex("^\\d{6,8}$")
+
+/** `View.AUTOFILL_HINT_2FA_APP_OTP` (Android 13) : code d'une application d'authentification, pas d'un SMS. */
+private const val AUTOFILL_HINT_2FA_APP_OTP = "2faAppOTPCode"
 
 @Composable
 private fun ErrorText(message: String) {
