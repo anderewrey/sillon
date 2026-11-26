@@ -52,11 +52,6 @@ class SecureStore(context: Context) {
         return legacy
     }
 
-    /** Nouvel identifiant d'appareil de confiance remis par le NAS (chiffré, comme dans [save]). */
-    fun saveDeviceId(id: String) {
-        prefs.edit().putString(K_DEVICE_ENC, encrypt(id)).remove(K_DEVICE).apply()
-    }
-
     /** Session du NAS (identifiant de session chiffré), pour s'ouvrir sans attendre le réseau. [owner] = adresse + compte. */
     fun saveSession(owner: String, snapshot: SessionSnapshot) {
         val json = org.json.JSONObject()
@@ -115,9 +110,21 @@ class SecureStore(context: Context) {
         prefs.getString(K_ACCOUNT, null) == account &&
             (prefs.getString(K_URL, null) == url || (quickConnectId != null && prefs.getString(K_QC, null) == quickConnectId))
 
-    /** Appareil de confiance (double authentification) mémorisé pour ce NAS et ce compte, même après une déconnexion. */
+    /**
+     * Appareil de confiance (double authentification) mémorisé pour ce compte sur ce NAS, y compris quand l'adresse
+     * QuickConnect a changé entre-temps.
+     */
     fun trustedDevice(url: String, quickConnectId: String?, account: String): String? =
-        if (sameNas(url, quickConnectId, account)) loadDeviceId() else null
+        if (sameNas(url, quickConnectId, account)) load()?.deviceId else null
+
+    /**
+     * Nouvel identifiant d'appareil de confiance remis par le NAS. Passe par [load] et [save] : il est stocké
+     * exactement comme le reste des identifiants.
+     */
+    fun saveDeviceId(id: String) {
+        val current = load() ?: return
+        if (current.deviceId != id) save(current.copy(deviceId = id))
+    }
 
     /** Mot de passe enregistré pour ce NAS et ce compte : évite de le retaper quand le NAS redemande un code. */
     fun savedPassword(url: String, quickConnectId: String?, account: String): String? =

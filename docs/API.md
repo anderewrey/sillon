@@ -25,10 +25,14 @@ L'app en déduit ses capacités (version max) :
 1. (optionnel) `SYNO.API.Encryption` / `getinfo` v1 : clé publique si le NAS impose le chiffrement du mot de passe.
 2. `SYNO.API.Auth` / `login` (version = max supportée, 1 par défaut) avec :
    `account`, `passwd`, `session=AudioStation`, `client_time`,
-   et si 2FA : `otp_code`, `enable_device_token`, `device_id`, `device_name`.
+   et pour la 2FA : `otp_code` (seulement quand un code est saisi), plus à **chaque** connexion
+   `enable_device_token=yes`, `device_name` (toujours le même nom) et `device_id` s'il est connu.
 3. La réponse contient le `sid` → à passer en `_sid` partout.
 4. Déconnexion : `SYNO.API.Auth` / `logout` v1.
 Note : v5 = OTP imposé, v6 = device de confiance (évite de redemander l'OTP).
+L'identifiant d'appareil de confiance revient dans `data.did` (parfois `data.device_id`). DSM ne le reconnaît
+que s'il est renvoyé avec le même `device_name` ; il peut être renouvelé à n'importe quelle connexion, il faut
+donc toujours garder le dernier reçu (sinon le code OTP est redemandé au lancement suivant).
 
 ## 3. APIs Audio Station
 `Info, Album, Artist, Composer, Cover, Folder, Genre, Lyrics, LyricsSearch, Pin,
