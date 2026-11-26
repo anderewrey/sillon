@@ -114,6 +114,7 @@ fun LoginScreen(
                 Text("Utiliser un autre compte")
             }
         } else {
+            val submit = { onLogin(url, account, password, insecure, otp.ifBlank { null }) }
             Text(
                 "Connecte-toi à ton NAS Synology",
                 style = MaterialTheme.typography.bodyLarge,
@@ -148,10 +149,15 @@ fun LoginScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth().semantics { contentType = ContentType.Password },
             )
-            if (state.otpRequired) {
-                Spacer(Modifier.height(12.dp))
-                OtpField(otp, onChange = { otp = it }, onDone = {})
-            }
+            // Toujours visible : avec la 2FA, le code part dès la première tentative (un code copié dans le
+            // gestionnaire de mots de passe est déjà repris). Sans 2FA, on le laisse vide.
+            Spacer(Modifier.height(12.dp))
+            OtpField(
+                otp,
+                onChange = { otp = it },
+                optional = !state.otpRequired,
+                onDone = { if (url.isNotBlank() && account.isNotBlank() && password.isNotEmpty()) submit() },
+            )
             Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f)) {
@@ -179,7 +185,7 @@ fun LoginScreen(
 
             Spacer(Modifier.height(20.dp))
             Button(
-                onClick = { onLogin(url, account, password, insecure, otp.ifBlank { null }) },
+                onClick = submit,
                 enabled = url.isNotBlank() && account.isNotBlank() && password.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Se connecter") }
@@ -228,7 +234,14 @@ fun LoginScreen(
  *   code dans Bitwarden, on revient, il est déjà là.
  */
 @Composable
-private fun OtpField(value: String, onChange: (String) -> Unit, onDone: () -> Unit, autoFocus: Boolean = false) {
+private fun OtpField(
+    value: String,
+    onChange: (String) -> Unit,
+    onDone: () -> Unit,
+    autoFocus: Boolean = false,
+    /** Formulaire complet : le code n'est utile qu'aux comptes protégés par la double authentification. */
+    optional: Boolean = false,
+) {
     val context = LocalContext.current
     val windowInfo = LocalWindowInfo.current
     val focus = remember { FocusRequester() }
@@ -253,7 +266,7 @@ private fun OtpField(value: String, onChange: (String) -> Unit, onDone: () -> Un
     OutlinedTextField(
         value = value,
         onValueChange = { onChange(it.filter(Char::isDigit).take(8)) },
-        label = { Text("Code à usage unique (2FA)") },
+        label = { Text(if (optional) "Code 2FA (si ton compte en a un)" else "Code à usage unique (2FA)") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
