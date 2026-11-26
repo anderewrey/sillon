@@ -2,7 +2,6 @@ package io.github.inobody92.sillon.playback
 
 import android.content.ComponentName
 import android.content.Context
-import android.net.Uri
 import android.os.Bundle
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
@@ -13,7 +12,6 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import io.github.inobody92.sillon.data.Album
 import io.github.inobody92.sillon.data.Hidden
-import io.github.inobody92.sillon.data.OfflineStore
 import io.github.inobody92.sillon.data.Song
 import io.github.inobody92.sillon.data.SynoClient
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -86,12 +84,11 @@ class PlayerController(context: Context) {
     /** Titres à mettre en file : sans les masqués, sauf quand on en ajoute un seul à la main. */
     private fun queueable(songs: List<Song>): List<Song> = if (songs.size == 1) songs else Hidden.visible(songs)
 
-    private fun itemsFor(client: SynoClient?, songs: List<Song>, album: Album?): List<MediaItem> {
-        val albumArtwork = album?.let { client?.coverUrl(it, withSid = true) }?.let(Uri::parse)
+    private fun itemsFor(songs: List<Song>, album: Album?): List<MediaItem> {
+        // Le fournisseur de pochettes prend d'abord la pochette téléchargée : elle s'affiche aussi sans réseau.
+        val albumArtwork = album?.let { CoverUris.album(appContext, it) }
         return songs.map { song ->
-            // La pochette téléchargée passe en premier : elle s'affiche aussi sans réseau.
-            val artwork = OfflineStore.coverUri(song) ?: albumArtwork ?: MediaItems.artwork(client, song)
-            MediaItems.song(song, album, artwork)
+            MediaItems.song(song, album, albumArtwork ?: CoverUris.song(appContext, song))
         }
     }
 
@@ -107,7 +104,7 @@ class PlayerController(context: Context) {
         val kept = songs.filterIndexed { i, s -> (keepStart && i == start) || !Hidden.isHiddenSong(s) }
         if (kept.isEmpty()) return
         val keptStart = if (keepStart) (0 until start).count { !Hidden.isHiddenSong(songs[it]) } else 0
-        val items = itemsFor(client, kept, album)
+        val items = itemsFor(kept, album)
         withController {
             it.setMediaItems(items, keptStart.coerceIn(items.indices), 0L)
             it.prepare()
@@ -117,7 +114,7 @@ class PlayerController(context: Context) {
 
     /** Insère [songs] juste après le morceau en cours (ou lance la lecture si la file est vide). */
     fun playNext(client: SynoClient?, songs: List<Song>, album: Album? = null) {
-        val items = itemsFor(client, queueable(songs), album)
+        val items = itemsFor(queueable(songs), album)
         if (items.isEmpty()) return
         withController {
             if (it.mediaItemCount == 0) {
@@ -132,7 +129,7 @@ class PlayerController(context: Context) {
 
     /** Ajoute [songs] en fin de file (ou lance la lecture si la file est vide). */
     fun addToQueue(client: SynoClient?, songs: List<Song>, album: Album? = null) {
-        val items = itemsFor(client, queueable(songs), album)
+        val items = itemsFor(queueable(songs), album)
         if (items.isEmpty()) return
         withController {
             if (it.mediaItemCount == 0) {

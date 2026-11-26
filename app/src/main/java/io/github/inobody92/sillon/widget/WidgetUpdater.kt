@@ -56,7 +56,7 @@ class WidgetUpdater(
         val md = player.mediaMetadata
         val coverKey = (md.artworkUri?.toString() ?: item?.mediaId)?.takeIf { item != null }
         if (coverKey != savedCoverKey) {
-            // Les adresses de pochette du NAS contiennent le sid : on compare sans lui pour ne pas recharger à chaque reconnexion.
+            // Adresse content:// stable (sans sid) : la pochette n'est rechargée que si elle change vraiment.
             WidgetStore.saveCover(context, loadCover())
             savedCoverKey = coverKey
         }

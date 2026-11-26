@@ -133,7 +133,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
             part.delete()
             return@withContext false
         }
-        val target = java.io.File(part.parentFile, part.nameWithoutExtension + "." + song.ext.ifBlank { "bin" })
+        val target = java.io.File(part.parentFile, part.nameWithoutExtension + "." + safeExtension(song.ext).ifBlank { "bin" })
         if (!part.renameTo(target)) {
             part.delete()
             return@withContext false

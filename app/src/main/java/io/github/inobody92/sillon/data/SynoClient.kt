@@ -44,6 +44,14 @@ data class Album(val name: String, val albumArtist: String, val artist: String, 
     val displayArtist: String get() = albumArtist.ifBlank { artist }
 }
 
+/**
+ * Extension de fichier sûre : elle vient du chemin du fichier sur le NAS et sert à nommer des fichiers locaux.
+ * Tout ce qui n'est pas 1 à 5 lettres ou chiffres est remplacé par une chaîne vide (format inconnu).
+ */
+fun safeExtension(ext: String): String = ext.lowercase().takeIf { SAFE_EXTENSION.matches(it) }.orEmpty()
+
+private val SAFE_EXTENSION = Regex("^[a-z0-9]{1,5}$")
+
 data class Song(
     val id: String,
     val title: String,
@@ -740,8 +748,6 @@ class SynoClient(val creds: Credentials) {
             }
         }
 
-    private fun errorCode(json: JSONObject): Int = json.optJSONObject("error")?.optInt("code", -1) ?: -1
-
     companion object {
         private const val PLAYLIST = "SYNO.AudioStation.Playlist"
         private val SESSION_ERRORS = setOf(106, 107, 119)
@@ -750,6 +756,11 @@ class SynoClient(val creds: Credentials) {
         private const val ERROR_OTP_REQUIRED = 403
         /** Nom de l'appareil de confiance : ne doit jamais changer, sinon le NAS redemande un code OTP. */
         private const val DEVICE_NAME = "Sillon"
+
+        /** La réponse JSON [body] du NAS signale une session expirée ou qui n'est plus valable. */
+        fun isSessionError(body: String): Boolean = runCatching { errorCode(JSONObject(body)) in SESSION_ERRORS }.getOrDefault(false)
+
+        private fun errorCode(json: JSONObject): Int = json.optJSONObject("error")?.optInt("code", -1) ?: -1
 
         /** Clé de cache stable pour une URL : on retire le sid, qui change à chaque connexion. */
         fun stableKey(url: String): String =

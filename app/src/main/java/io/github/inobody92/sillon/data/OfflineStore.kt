@@ -1,7 +1,6 @@
 package io.github.inobody92.sillon.data
 
 import android.content.Context
-import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -87,7 +86,7 @@ object OfflineStore {
     fun file(songId: String): File? =
         songs[songId]?.let { fileFor(it.song) }?.takeIf { it.exists() }
 
-    private fun fileFor(song: Song) = File(root, "${safe(song.id)}.${song.ext.ifBlank { "bin" }}")
+    private fun fileFor(song: Song) = File(root, "${safe(song.id)}.${safeExtension(song.ext).ifBlank { "bin" }}")
 
     fun partFile(song: Song) = File(root, "${safe(song.id)}.part")
 
@@ -97,8 +96,21 @@ object OfflineStore {
 
     fun coverFile(song: Song) = File(covers, "${coverKey(song)}.jpg")
 
-    /** Adresse de la pochette locale, ou null si elle n'a pas été téléchargée. */
-    fun coverUri(song: Song): Uri? = coverFile(song).takeIf { it.exists() && it.length() > 0 }?.let(Uri::fromFile)
+    /**
+     * Clé de la pochette d'un album : la même que [coverKey] pour ses titres (même nom d'album, même artiste
+     * de l'album). Null si l'album n'a pas de nom : ses titres utilisent alors leur propre identifiant.
+     */
+    fun coverKey(album: Album): String? =
+        album.name.takeIf { it.isNotBlank() }?.let { Integer.toHexString((it + "|" + album.albumArtist).hashCode()) }
+
+    /** Pochette téléchargée pour la clé [key] (voir [coverKey]), si elle existe. */
+    fun coverFileForKey(key: String): File? {
+        if (!COVER_KEY.matches(key)) return null
+        return File(covers, "$key.jpg").takeIf { it.isFile && it.length() > 0 }
+    }
+
+    /** Format de [coverKey] : `Integer.toHexString`. Tout le reste est refusé (aucun chemin construit par un tiers). */
+    private val COVER_KEY = Regex("^[0-9a-f]{1,8}$")
 
     // --- état -------------------------------------------------------------------------
 

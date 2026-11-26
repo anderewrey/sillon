@@ -3,6 +3,7 @@ package io.github.inobody92.sillon.playback
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -29,6 +30,7 @@ import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionCommands
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
@@ -53,7 +55,6 @@ import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.guava.future
@@ -78,6 +79,7 @@ class PlaybackService : MediaLibraryService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val equalizer = EqualizerEffect()
     private lateinit var tree: LibraryTree
+    private lateinit var callers: CallerPolicy
 
     /** Morceau pour lequel on a déjà tenté une reconnexion (évite les boucles). */
     private var retriedMediaId: String? = null
@@ -100,6 +102,7 @@ class PlaybackService : MediaLibraryService() {
         Likes.init(applicationContext)
         TasteStore.init(applicationContext) // goûts, titres masqués et statistiques d'écoute (aussi sans l'application ouverte)
         tree = LibraryTree(applicationContext)
+        callers = CallerPolicy(applicationContext)
 
         // Réutilise le client HTTP de la session (certificat auto-signé compris).
         val callFactory = Call.Factory { request ->
@@ -107,9 +110,10 @@ class PlaybackService : MediaLibraryService() {
             client.http.newCall(request)
         }
         // Réseau : l'adresse interne sillon:// devient la vraie URL de streaming, avec le sid courant.
+        // Seules ces adresses passent par le client du NAS : toute autre URL est refusée.
         val networkResolver = ResolvingDataSource.Resolver { spec: DataSpec ->
             if (spec.uri.scheme != MediaItems.SCHEME) {
-                spec
+                throw IOException("Adresse refusée : seules les adresses sillon:// sont lues")
             } else {
                 val id = spec.uri.getQueryParameter("id") ?: throw IOException("Identifiant de morceau manquant")
                 val client = activeClient() ?: throw IOException("Pas de session Sillon active")
@@ -398,19 +402,16 @@ class PlaybackService : MediaLibraryService() {
     private fun restoreQueue(player: Player) {
         scope.launch {
             val saved = withContext(Dispatchers.IO) { QueueStore.load(applicationContext) } ?: return@launch
-            // Pochette : si la session NAS n'est pas déjà là, on n'attend pas plus de 4 s (réseau absent).
-            val client = withTimeoutOrNull(4_000) {
-                withContext(Dispatchers.IO) { SessionHolder.client ?: runCatching { SessionHolder.restore(applicationContext) }.getOrNull() }
-            }
             if (player.mediaItemCount > 0) return@launch // l'utilisateur a déjà lancé autre chose entre-temps
-            player.setMediaItems(buildItems(saved, client), saved.index, saved.positionMs)
+            // Les pochettes passent par CoverProvider : inutile d'attendre la session du NAS ici.
+            player.setMediaItems(buildItems(saved), saved.index, saved.positionMs)
             player.shuffleModeEnabled = saved.shuffle
             player.repeatMode = saved.repeatMode
         }
     }
 
-    private fun buildItems(saved: SavedQueue, client: io.github.inobody92.sillon.data.SynoClient?): List<MediaItem> =
-        saved.items.map { MediaItems.song(it.song, null, MediaItems.artwork(client, it.song), it.parent, it.radio) }
+    private fun buildItems(saved: SavedQueue): List<MediaItem> =
+        saved.items.map { MediaItems.song(it.song, null, CoverUris.song(applicationContext, it.song), it.parent, it.radio) }
 
     /** Titre masqué (lui-même ou par une règle sur son artiste ou son album). */
     private fun isHiddenItem(item: MediaItem): Boolean {
@@ -467,6 +468,21 @@ class PlaybackService : MediaLibraryService() {
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): MediaSession.ConnectionResult {
+            val caller = callers.classify(controller)
+            Log.i(TAG_CALLERS, "connexion de ${controller.packageName} (uid ${controller.uid}) : $caller")
+            if (caller == CallerClass.UNKNOWN) {
+                // Application inconnue : commandes de lecture seulement (lecture, pause, suivant, volume…).
+                // Ni parcours de la bibliothèque, ni ajout à la file, ni « j'aime ». Jamais de refus complet :
+                // un contrôleur légitime mais imprévu (accessoire, montre d'une autre marque) garde l'essentiel.
+                val playback = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
+                    .remove(Player.COMMAND_SET_MEDIA_ITEM)
+                    .remove(Player.COMMAND_CHANGE_MEDIA_ITEMS)
+                    .build()
+                return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                    .setAvailableSessionCommands(SessionCommands.EMPTY)
+                    .setAvailablePlayerCommands(playback)
+                    .build()
+            }
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
                 .add(LIKE_COMMAND)
                 .add(SLEEP_COMMAND)
@@ -564,15 +580,14 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future {
             val saved = withContext(Dispatchers.IO) { QueueStore.load(applicationContext) }
                 ?: throw UnsupportedOperationException("Rien à reprendre")
-            val client = withContext(Dispatchers.IO) { SessionHolder.client ?: runCatching { SessionHolder.restore(applicationContext) }.getOrNull() }
-            MediaSession.MediaItemsWithStartPosition(buildItems(saved, client), saved.index, saved.positionMs)
+            MediaSession.MediaItemsWithStartPosition(buildItems(saved), saved.index, saved.positionMs)
         }
 
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>,
-        ): ListenableFuture<MutableList<MediaItem>> = scope.future { resolve(mediaItems).toMutableList() }
+        ): ListenableFuture<MutableList<MediaItem>> = scope.future { resolve(mediaItems, callers.isSelf(controller)).toMutableList() }
 
         override fun onSetMediaItems(
             mediaSession: MediaSession,
@@ -591,7 +606,7 @@ class PlaybackService : MediaLibraryService() {
                     return@future MediaSession.MediaItemsWithStartPosition(siblings, index, startPositionMs)
                 }
             }
-            val resolved = resolve(mediaItems)
+            val resolved = resolve(mediaItems, callers.isSelf(controller))
             val start = if (resolved.size == mediaItems.size) startIndex else 0
             MediaSession.MediaItemsWithStartPosition(
                 resolved,
@@ -601,11 +616,16 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    /** Remplace les éléments « sans adresse » (identifiants de conteneurs, requêtes vocales) par de vrais titres. */
-    private suspend fun resolve(items: List<MediaItem>): List<MediaItem> {
+    /**
+     * Remplace les éléments « sans adresse » (identifiants de conteneurs, requêtes vocales) par de vrais titres.
+     * Les éléments venus d'une autre application ([fromSelf] faux) sont toujours reconstruits depuis leur identifiant :
+     * leur adresse et leurs métadonnées sont ignorées (sinon le lecteur téléchargerait n'importe quelle URL avec le
+     * client du NAS).
+     */
+    private suspend fun resolve(items: List<MediaItem>, fromSelf: Boolean): List<MediaItem> {
         val out = mutableListOf<MediaItem>()
         for (item in items) {
-            if (item.localConfiguration != null) {
+            if (fromSelf && item.localConfiguration != null) {
                 out += item
                 continue
             }
@@ -634,6 +654,7 @@ class PlaybackService : MediaLibraryService() {
         const val RADIO_LOW_WATER = 5
         const val PREFETCH_AHEAD = 2
         const val SLEEP_FADE_MS = 8_000L
+        const val TAG_CALLERS = "SillonAppelants"
         val LIKE_COMMAND = SessionCommand("sillon.TOGGLE_LIKE", Bundle.EMPTY)
         val SLEEP_COMMAND = SessionCommand("sillon.SLEEP", Bundle.EMPTY)
     }
