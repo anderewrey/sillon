@@ -24,7 +24,8 @@ class SecureStore(context: Context) {
             .putString(K_ACCOUNT, c.account)
             .putString(K_PASSWORD, encrypt(c.password))
             .putBoolean(K_INSECURE, c.insecure)
-            .putString(K_DEVICE, c.deviceId)
+            .putString(K_DEVICE_ENC, c.deviceId?.let(::encrypt))
+            .remove(K_DEVICE)
             .putString(K_PIN, c.pinnedSha256)
             .putString(K_QC, c.quickConnectId)
             .apply()
@@ -35,9 +36,20 @@ class SecureStore(context: Context) {
         val account = prefs.getString(K_ACCOUNT, null) ?: return null
         val enc = prefs.getString(K_PASSWORD, null) ?: return null
         val password = runCatching { decrypt(enc) }.getOrNull() ?: return null
-        return Credentials(url, account, password, prefs.getBoolean(K_INSECURE, false), prefs.getString(K_DEVICE, null),
+        return Credentials(url, account, password, prefs.getBoolean(K_INSECURE, false), loadDeviceId(),
             prefs.getString(K_PIN, null), prefs.getString(K_QC, null),
         )
+    }
+
+    /**
+     * Device de confiance (permet de se connecter sans code 2FA) : chiffré comme le mot de passe. Les versions
+     * précédentes l'enregistraient en clair : on le reprend une fois, puis on le réenregistre chiffré.
+     */
+    private fun loadDeviceId(): String? {
+        prefs.getString(K_DEVICE_ENC, null)?.let { enc -> return runCatching { decrypt(enc) }.getOrNull() }
+        val legacy = prefs.getString(K_DEVICE, null) ?: return null
+        prefs.edit().putString(K_DEVICE_ENC, encrypt(legacy)).remove(K_DEVICE).apply()
+        return legacy
     }
 
     /** Session du NAS (identifiant de session chiffré), pour s'ouvrir sans attendre le réseau. [owner] = adresse + compte. */
@@ -132,7 +144,8 @@ class SecureStore(context: Context) {
         const val K_ACCOUNT = "account"
         const val K_PASSWORD = "password"
         const val K_INSECURE = "insecure"
-        const val K_DEVICE = "device_id"
+        const val K_DEVICE = "device_id" // ancien format, en clair
+        const val K_DEVICE_ENC = "device_id_enc"
         const val K_PIN = "pinned_sha256"
         const val K_QC = "quickconnect_id"
         const val K_SESSION = "nas_session"

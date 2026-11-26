@@ -86,7 +86,7 @@ object OfflineStore {
     fun file(songId: String): File? =
         songs[songId]?.let { fileFor(it.song) }?.takeIf { it.exists() }
 
-    private fun fileFor(song: Song) = File(root, "${safe(song.id)}.${song.ext.ifBlank { "bin" }}")
+    private fun fileFor(song: Song) = File(root, "${safe(song.id)}.${safeExtension(song.ext).ifBlank { "bin" }}")
 
     fun partFile(song: Song) = File(root, "${safe(song.id)}.part")
 

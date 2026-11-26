@@ -13,6 +13,14 @@ class ModelTest {
         assertEquals(listOf(s), songsFromJson(listOf(s).toJsonArray()))
     }
 
+    @Test fun extensionVenueDuNasAssainie() {
+        assertEquals("flac", safeExtension("FLAC"))
+        assertEquals("m4a", safeExtension("m4a"))
+        assertEquals("", safeExtension("mp3/../../index.json"))
+        assertEquals("", safeExtension("toolongext"))
+        assertEquals("", safeExtension(""))
+    }
+
     @Test fun anciennesDonneesSansGenreNiAnneeRestentLisibles() {
         val o = org.json.JSONObject().put("id", "x").put("title", "t").put("ext", "mp3")
         val s = songFromJson(o)
