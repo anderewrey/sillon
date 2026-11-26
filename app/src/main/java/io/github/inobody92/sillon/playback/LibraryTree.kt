@@ -169,14 +169,13 @@ class LibraryTree(private val context: Context) {
 
     // --- éléments ---------------------------------------------------------------------
 
-    private suspend fun songItem(song: Song, album: Album?, parentId: String? = null, radio: String? = null): MediaItem {
-        val c = client()
-        val artwork = (album?.let { c?.coverUrl(it, withSid = true) } ?: c?.songCoverUrl(song.id, withSid = true))?.let(Uri::parse)
+    private fun songItem(song: Song, album: Album?, parentId: String? = null, radio: String? = null): MediaItem {
+        val artwork = album?.let { CoverUris.album(context, it) } ?: CoverUris.song(context, song)
         return MediaItems.song(song, album, artwork, parentId, radio)
     }
 
-    private suspend fun albumItem(album: Album): MediaItem {
-        val artwork = client()?.coverUrl(album, withSid = true)?.let(Uri::parse)
+    private fun albumItem(album: Album): MediaItem {
+        val artwork = CoverUris.album(context, album)
         return MediaItems.folder(
             id = encodeAlbum(album),
             title = album.name,

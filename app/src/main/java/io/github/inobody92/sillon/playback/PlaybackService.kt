@@ -53,7 +53,6 @@ import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.guava.future
@@ -398,19 +397,16 @@ class PlaybackService : MediaLibraryService() {
     private fun restoreQueue(player: Player) {
         scope.launch {
             val saved = withContext(Dispatchers.IO) { QueueStore.load(applicationContext) } ?: return@launch
-            // Pochette : si la session NAS n'est pas déjà là, on n'attend pas plus de 4 s (réseau absent).
-            val client = withTimeoutOrNull(4_000) {
-                withContext(Dispatchers.IO) { SessionHolder.client ?: runCatching { SessionHolder.restore(applicationContext) }.getOrNull() }
-            }
             if (player.mediaItemCount > 0) return@launch // l'utilisateur a déjà lancé autre chose entre-temps
-            player.setMediaItems(buildItems(saved, client), saved.index, saved.positionMs)
+            // Les pochettes passent par CoverProvider : inutile d'attendre la session du NAS ici.
+            player.setMediaItems(buildItems(saved), saved.index, saved.positionMs)
             player.shuffleModeEnabled = saved.shuffle
             player.repeatMode = saved.repeatMode
         }
     }
 
-    private fun buildItems(saved: SavedQueue, client: io.github.inobody92.sillon.data.SynoClient?): List<MediaItem> =
-        saved.items.map { MediaItems.song(it.song, null, MediaItems.artwork(client, it.song), it.parent, it.radio) }
+    private fun buildItems(saved: SavedQueue): List<MediaItem> =
+        saved.items.map { MediaItems.song(it.song, null, MediaItems.artwork(applicationContext, it.song), it.parent, it.radio) }
 
     /** Titre masqué (lui-même ou par une règle sur son artiste ou son album). */
     private fun isHiddenItem(item: MediaItem): Boolean {
@@ -564,8 +560,7 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future {
             val saved = withContext(Dispatchers.IO) { QueueStore.load(applicationContext) }
                 ?: throw UnsupportedOperationException("Rien à reprendre")
-            val client = withContext(Dispatchers.IO) { SessionHolder.client ?: runCatching { SessionHolder.restore(applicationContext) }.getOrNull() }
-            MediaSession.MediaItemsWithStartPosition(buildItems(saved, client), saved.index, saved.positionMs)
+            MediaSession.MediaItemsWithStartPosition(buildItems(saved), saved.index, saved.positionMs)
         }
 
         override fun onAddMediaItems(

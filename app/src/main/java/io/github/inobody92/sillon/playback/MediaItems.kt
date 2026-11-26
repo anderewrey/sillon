@@ -62,12 +62,10 @@ object MediaItems {
     }
 
     /**
-     * Pochette d'un titre : celle téléchargée si elle existe (marche hors connexion), sinon celle du NAS,
-     * sinon rien. Les adresses du NAS contiennent le sid courant.
+     * Pochette d'un titre, servie par [CoverProvider] : celle téléchargée si elle existe (marche hors connexion),
+     * sinon celle du NAS. L'adresse ne contient pas le sid.
      */
-    fun artwork(client: io.github.inobody92.sillon.data.SynoClient?, song: Song): Uri? =
-        io.github.inobody92.sillon.data.OfflineStore.coverUri(song)
-            ?: client?.songCoverUrl(song.id, withSid = true)?.let(Uri::parse)
+    fun artwork(context: android.content.Context, song: Song): Uri = CoverUris.song(context, song)
 
     /** Dossier de navigation (Android Auto) : non lisible directement, ou lisible en entier si [playable]. */
     fun folder(id: String, title: String, subtitle: String? = null, artwork: Uri? = null, playable: Boolean = false, type: Int = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED): MediaItem =

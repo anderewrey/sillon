@@ -1,7 +1,6 @@
 package io.github.inobody92.sillon.data
 
 import android.content.Context
-import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -112,9 +111,6 @@ object OfflineStore {
 
     /** Format de [coverKey] : `Integer.toHexString`. Tout le reste est refusé (aucun chemin construit par un tiers). */
     val COVER_KEY = Regex("^[0-9a-f]{1,8}$")
-
-    /** Adresse de la pochette locale, ou null si elle n'a pas été téléchargée. */
-    fun coverUri(song: Song): Uri? = coverFile(song).takeIf { it.exists() && it.length() > 0 }?.let(Uri::fromFile)
 
     // --- état -------------------------------------------------------------------------
 
