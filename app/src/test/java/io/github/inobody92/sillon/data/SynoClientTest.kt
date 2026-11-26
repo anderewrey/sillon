@@ -74,7 +74,20 @@ class SynoClientTest {
         val login = dsm.requests.last { it["method"] == "login" }
         assertEquals("DEVICE", login["device_id"])
         assertEquals("Sillon", login["device_name"])
+        assertEquals("yes", login["enable_device_token"])
         assertEquals(null, login["otp_code"])
+    }
+
+    @Test fun lIdentifiantDAppareilRemisParLeNasEstSignalePourEtreEnregistre() = runBlocking {
+        dsm.otp = "123456"
+        val saved = mutableListOf<String>()
+        val c = SynoClient(Credentials(server.url("/").toString().trimEnd('/'), "maxime", "secret", false)) { saved += it }
+        c.connect(otp = "123456")
+        assertEquals(listOf("DEVICE"), saved)
+        // Reconnexion (session expirée) : même identifiant, rien de nouveau à enregistrer.
+        dsm.expireSessionTimes = 1
+        c.albums(0, 10)
+        assertEquals(listOf("DEVICE"), saved)
     }
 
     @Test fun sessionExpireeAvecDoubleAuthentificationPasDeNouveauCode() = runBlocking {

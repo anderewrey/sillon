@@ -30,6 +30,8 @@ sealed interface AuthState {
     data class LoggedOut(
         val error: String? = null,
         val otpRequired: Boolean = false,
+        /** Le code est redemandé alors qu'un appareil de confiance était enregistré : le NAS ne l'a pas reconnu. */
+        val deviceRejected: Boolean = false,
         /** Certificat auto-signé à confirmer par l'utilisateur avant de continuer. */
         val certificate: CertificateRequest? = null,
     ) : AuthState
@@ -71,7 +73,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * reconnecte tout seul.
      */
     private fun connectFast(creds: Credentials, snapshot: SessionSnapshot) {
-        val live = SynoClient(creds).also { it.adopt(snapshot) }
+        val live = SynoClient(creds, store::saveDeviceId).also { it.adopt(snapshot) }
         SessionHolder.client = live
         _state.value = AuthState.LoggedIn(live)
         viewModelScope.launch {
@@ -87,7 +89,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (_: OtpRequiredException) {
                 SessionHolder.client = null
-                _state.value = AuthState.LoggedOut(otpRequired = true)
+                _state.value = AuthState.LoggedOut(otpRequired = true, deviceRejected = creds.deviceId != null)
             } catch (e: Exception) {
                 if (mustLogIn(e)) {
                     // Mot de passe refusé, compte désactivé, certificat changé : là, il faut l'utilisateur.
@@ -107,7 +109,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Connexion complète (découverte, authentification, capacités) ; retrouve l'adresse QuickConnect si elle a changé. */
     private suspend fun establish(initial: Credentials, otp: String?): SynoClient {
         var creds = initial
-        var client = SynoClient(creds)
+        var client = SynoClient(creds, store::saveDeviceId)
         try {
             client.connect(otp)
         } catch (e: IOException) {
@@ -117,7 +119,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val fresh = QuickConnect.resolve(id)
             if (fresh == null || fresh == creds.url) throw e
             creds = creds.copy(url = fresh)
-            client = SynoClient(creds)
+            client = SynoClient(creds, store::saveDeviceId)
             client.connect(otp)
         }
         val saved = creds.copy(deviceId = client.deviceId)
@@ -224,7 +226,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 SessionHolder.client = client
                 _state.value = AuthState.LoggedIn(client)
             } catch (_: OtpRequiredException) {
-                _state.value = AuthState.LoggedOut(otpRequired = true)
+                _state.value = AuthState.LoggedOut(otpRequired = true, deviceRejected = initial.deviceId != null)
             } catch (e: Exception) {
                 // Reconnexion automatique impossible faute de réseau : si des titres sont sur le téléphone, on les propose.
                 forgetRejectedPassword(e, initial)

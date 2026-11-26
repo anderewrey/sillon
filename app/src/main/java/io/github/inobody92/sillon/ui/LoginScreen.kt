@@ -99,6 +99,17 @@ fun LoginScreen(
                         "le NAS ne devrait plus le redemander.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                // Diagnostic : distingue « jamais mémorisé » de « mémorisé mais refusé par le NAS ».
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (state.deviceRejected) {
+                        "Le NAS n'a pas reconnu ce téléphone comme appareil de confiance."
+                    } else {
+                        "Ce téléphone n'est pas encore mémorisé par le NAS."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Spacer(Modifier.height(12.dp))
                 OtpField(otp, onChange = { otp = it }, autoFocus = true, onDone = {
                     if (otp.length >= 6) onLogin(initialUrl, initialAccount, "", initialInsecure, otp)

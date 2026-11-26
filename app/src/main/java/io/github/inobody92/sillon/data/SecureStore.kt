@@ -52,6 +52,11 @@ class SecureStore(context: Context) {
         return legacy
     }
 
+    /** Nouvel identifiant d'appareil de confiance remis par le NAS (chiffré, comme dans [save]). */
+    fun saveDeviceId(id: String) {
+        prefs.edit().putString(K_DEVICE_ENC, encrypt(id)).remove(K_DEVICE).apply()
+    }
+
     /** Session du NAS (identifiant de session chiffré), pour s'ouvrir sans attendre le réseau. [owner] = adresse + compte. */
     fun saveSession(owner: String, snapshot: SessionSnapshot) {
         val json = org.json.JSONObject()
