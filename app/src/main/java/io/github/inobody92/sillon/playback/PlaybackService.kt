@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Process
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -78,6 +79,7 @@ class PlaybackService : MediaLibraryService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val equalizer = EqualizerEffect()
     private lateinit var tree: LibraryTree
+    private lateinit var callers: CallerPolicy
 
     /** Morceau pour lequel on a déjà tenté une reconnexion (évite les boucles). */
     private var retriedMediaId: String? = null
@@ -100,6 +102,7 @@ class PlaybackService : MediaLibraryService() {
         Likes.init(applicationContext)
         TasteStore.init(applicationContext) // goûts, titres masqués et statistiques d'écoute (aussi sans l'application ouverte)
         tree = LibraryTree(applicationContext)
+        callers = CallerPolicy(applicationContext)
 
         // Réutilise le client HTTP de la session (certificat auto-signé compris).
         val callFactory = Call.Factory { request ->
@@ -464,6 +467,9 @@ class PlaybackService : MediaLibraryService() {
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): MediaSession.ConnectionResult {
+            // Observation : qui se connecte réellement (téléphone, voiture, montre), avant de restreindre quoi que ce soit.
+            val caller = callers.classify(controller)
+            Log.i(TAG_CALLERS, "connexion de ${controller.packageName} (uid ${controller.uid}) : $caller")
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
                 .add(LIKE_COMMAND)
                 .add(SLEEP_COMMAND)
@@ -641,6 +647,7 @@ class PlaybackService : MediaLibraryService() {
         const val RADIO_LOW_WATER = 5
         const val PREFETCH_AHEAD = 2
         const val SLEEP_FADE_MS = 8_000L
+        const val TAG_CALLERS = "SillonAppelants"
         val LIKE_COMMAND = SessionCommand("sillon.TOGGLE_LIKE", Bundle.EMPTY)
         val SLEEP_COMMAND = SessionCommand("sillon.SLEEP", Bundle.EMPTY)
     }
