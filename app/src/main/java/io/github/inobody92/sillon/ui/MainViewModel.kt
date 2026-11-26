@@ -50,7 +50,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val lastAccount get() = store.lastAccount()
     val lastInsecure get() = store.lastInsecure()
 
-    /** Mot de passe encore enregistré : l'écran de connexion n'oblige pas à le retaper (code OTP, NAS injoignable). */
+    /** Mot de passe encore enregistré : l'écran de connexion propose de reprendre ce compte (au plus un code OTP). */
     val hasSavedPassword get() = store.hasPassword()
 
     init {
@@ -91,6 +91,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 if (mustLogIn(e)) {
                     // Mot de passe refusé, compte désactivé, certificat changé : là, il faut l'utilisateur.
+                    forgetRejectedPassword(e, creds)
                     SessionHolder.client = null
                     _state.value = AuthState.LoggedOut(error = describe(e))
                 } else if (e is IOException && e !is SSLException && OfflineStore.state.value.songs.isNotEmpty()) {
@@ -155,7 +156,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // On réutilise le device de confiance enregistré pour ce même compte et ce même NAS, même après une
             // déconnexion ou un changement d'adresse QuickConnect : sinon le NAS redemande un code OTP.
             val deviceId = store.trustedDevice(base, quickConnectId, account)
-            // Champ laissé vide : le mot de passe déjà enregistré (seul le code OTP est à saisir).
+            // Écran de reconnexion (aucun mot de passe saisi) : celui enregistré pour ce compte.
             val pass = password.ifEmpty { store.savedPassword(base, quickConnectId, account) } ?: run {
                 _state.value = AuthState.LoggedOut(error = "Saisis ton mot de passe")
                 return@launch
@@ -226,8 +227,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = AuthState.LoggedOut(otpRequired = true)
             } catch (e: Exception) {
                 // Reconnexion automatique impossible faute de réseau : si des titres sont sur le téléphone, on les propose.
+                forgetRejectedPassword(e, initial)
                 _state.value = if (silent && !mustLogIn(e) && OfflineStore.state.value.songs.isNotEmpty()) {
                     AuthState.Offline
+                } else if (e is ApiException && e.code == ERROR_BAD_OTP) {
+                    // Code erroné : on reste sur la saisie du code.
+                    AuthState.LoggedOut(error = describe(e), otpRequired = true)
                 } else {
                     // Toujours dire pourquoi : « NAS injoignable » n'appelle pas la même réaction qu'un mot de passe
                     // refusé. Le mot de passe reste enregistré, « Se connecter » suffit pour réessayer.
@@ -243,6 +248,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun mustLogIn(e: Exception): Boolean =
         (e is ApiException && e.code in CREDENTIAL_ERRORS) || certificateChanged(e)
+
+    /**
+     * Le NAS refuse le mot de passe enregistré (changé dans DSM) : on l'oublie, pour que l'écran de connexion
+     * redemande le mot de passe au lieu de proposer une reconnexion vouée à l'échec. Le device de confiance reste.
+     */
+    private fun forgetRejectedPassword(e: Exception, used: Credentials) {
+        if (e is ApiException && e.code == ERROR_BAD_PASSWORD && store.load()?.password == used.password) {
+            store.forgetPassword()
+        }
+    }
 
     private fun certificateChanged(e: Throwable): Boolean =
         generateSequence(e) { it.cause }.any { it.message?.contains("a changé") == true }
@@ -269,5 +284,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         /** Codes de `SYNO.API.Auth` login qui tiennent au compte : 400 identifiants, 401 désactivé, 402 refusé, 406 2FA à configurer. */
         val CREDENTIAL_ERRORS = setOf(400, 401, 402, 406)
+        const val ERROR_BAD_PASSWORD = 400
+        const val ERROR_BAD_OTP = 404
     }
 }
