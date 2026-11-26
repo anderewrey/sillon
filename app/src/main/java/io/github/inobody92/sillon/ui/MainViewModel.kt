@@ -14,6 +14,7 @@ import io.github.inobody92.sillon.data.SessionSnapshot
 import io.github.inobody92.sillon.data.SessionHolder
 import io.github.inobody92.sillon.data.SynoClient
 import io.github.inobody92.sillon.data.probeCertificate
+import io.github.inobody92.sillon.data.sessionOwner
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +50,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val lastAccount get() = store.lastAccount()
     val lastInsecure get() = store.lastInsecure()
 
+    /** Mot de passe encore enregistré : l'écran de connexion n'oblige pas à le retaper (code OTP, NAS injoignable). */
+    val hasSavedPassword get() = store.hasPassword()
+
     init {
         OfflineStore.init(app)
         val saved = store.load()
@@ -60,8 +64,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (snapshot != null) connectFast(saved, snapshot) else connect(saved, otp = null, silent = true)
         }
     }
-
-    private fun sessionOwner(c: Credentials) = c.url + "|" + c.account
 
     /**
      * Lancement rapide : on rouvre l'application sur la dernière session connue, sans attendre le NAS (trois
@@ -87,14 +89,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 SessionHolder.client = null
                 _state.value = AuthState.LoggedOut(otpRequired = true)
             } catch (e: Exception) {
-                val unreachable = e is IOException && e !is SSLException
-                if (unreachable) {
-                    // Pas de réseau : l'écran hors-ligne s'il y a des titres sur le téléphone, sinon on reste là.
-                    if (OfflineStore.state.value.songs.isNotEmpty()) _state.value = AuthState.Offline
-                } else {
+                if (mustLogIn(e)) {
+                    // Mot de passe refusé, compte désactivé, certificat changé : là, il faut l'utilisateur.
                     SessionHolder.client = null
-                    _state.value = AuthState.LoggedOut(error = if (certificateChanged(e)) describe(e) else null)
+                    _state.value = AuthState.LoggedOut(error = describe(e))
+                } else if (e is IOException && e !is SSLException && OfflineStore.state.value.songs.isNotEmpty()) {
+                    // Pas de réseau : l'écran hors-ligne, puisqu'il y a des titres sur le téléphone.
+                    _state.value = AuthState.Offline
                 }
+                // Sinon (réseau qui flanche, réponse inattendue…) on garde la session : elle est peut-être encore
+                // valide, et le premier appel se reconnectera tout seul. Jamais d'écran de connexion pour un aléa.
             }
         }
     }
@@ -148,11 +152,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
             }
-            // On réutilise le device de confiance enregistré pour ce même compte et ce même NAS.
-            val previous = store.load()
-            val deviceId = previous?.takeIf { it.url == base && it.account == account }?.deviceId
+            // On réutilise le device de confiance enregistré pour ce même compte et ce même NAS, même après une
+            // déconnexion ou un changement d'adresse QuickConnect : sinon le NAS redemande un code OTP.
+            val deviceId = store.trustedDevice(base, quickConnectId, account)
+            // Champ laissé vide : le mot de passe déjà enregistré (seul le code OTP est à saisir).
+            val pass = password.ifEmpty { store.savedPassword(base, quickConnectId, account) } ?: run {
+                _state.value = AuthState.LoggedOut(error = "Saisis ton mot de passe")
+                return@launch
+            }
             // QuickConnect fournit un certificat valide : l'option « auto-signé » ne s'applique qu'à une adresse directe.
-            val creds = Credentials(base, account, password, insecure && quickConnectId == null, deviceId, null, quickConnectId)
+            val creds = Credentials(base, account, pass, insecure && quickConnectId == null, deviceId, null, quickConnectId)
             if (creds.insecure) askToTrustCertificate(creds, otp?.ifBlank { null }) else connect(creds, otp?.ifBlank { null }, silent = false)
         }
     }
@@ -217,16 +226,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = AuthState.LoggedOut(otpRequired = true)
             } catch (e: Exception) {
                 // Reconnexion automatique impossible faute de réseau : si des titres sont sur le téléphone, on les propose.
-                val unreachable = e is IOException && e !is SSLException
-                _state.value = if (silent && unreachable && OfflineStore.state.value.songs.isNotEmpty()) {
+                _state.value = if (silent && !mustLogIn(e) && OfflineStore.state.value.songs.isNotEmpty()) {
                     AuthState.Offline
                 } else {
-                    // Un certificat qui change est un événement de sécurité : on l'annonce même en reconnexion automatique.
-                    AuthState.LoggedOut(error = if (silent && !certificateChanged(e)) null else describe(e))
+                    // Toujours dire pourquoi : « NAS injoignable » n'appelle pas la même réaction qu'un mot de passe
+                    // refusé. Le mot de passe reste enregistré, « Se connecter » suffit pour réessayer.
+                    AuthState.LoggedOut(error = describe(e))
                 }
             }
         }
     }
+
+    /**
+     * Erreur qui demande vraiment l'utilisateur : identifiants refusés, compte désactivé ou certificat changé.
+     * Tout le reste (réseau, NAS lent, réponse inattendue) est passager et ne doit pas déconnecter.
+     */
+    private fun mustLogIn(e: Exception): Boolean =
+        (e is ApiException && e.code in CREDENTIAL_ERRORS) || certificateChanged(e)
 
     private fun certificateChanged(e: Throwable): Boolean =
         generateSequence(e) { it.cause }.any { it.message?.contains("a changé") == true }
@@ -248,5 +264,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         is IOException -> "Impossible de joindre le NAS : vérifie l'adresse, le port et ta connexion"
         else -> e.message ?: "Erreur inconnue"
+    }
+
+    private companion object {
+        /** Codes de `SYNO.API.Auth` login qui tiennent au compte : 400 identifiants, 401 désactivé, 402 refusé, 406 2FA à configurer. */
+        val CREDENTIAL_ERRORS = setOf(400, 401, 402, 406)
     }
 }

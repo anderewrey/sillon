@@ -114,6 +114,7 @@ class MainActivity : ComponentActivity() {
                             initialUrl = viewModel.lastUrl,
                             initialAccount = viewModel.lastAccount,
                             initialInsecure = viewModel.lastInsecure,
+                            savedPassword = viewModel.hasSavedPassword,
                             onLogin = viewModel::login,
                             onConfirmCertificate = viewModel::confirmCertificate,
                             onRejectCertificate = viewModel::rejectCertificate,

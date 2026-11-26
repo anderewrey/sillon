@@ -58,7 +58,9 @@ class FakeDsm : Dispatcher() {
     private fun auth(p: Map<String, String>): MockResponse {
         if (p["method"] == "logout") return ok(success(JSONObject()))
         if (p["passwd"] != password) return ok(error(400))
-        if (otp != null && p["otp_code"] != otp && p["device_id"] == null) return ok(error(403))
+        // Comme DSM 7 : l'appareil de confiance n'est reconnu qu'avec le nom sous lequel il a été enregistré.
+        val trusted = p["device_id"] == "DEVICE" && p["device_name"] == "Sillon"
+        if (otp != null && p["otp_code"] != otp && !trusted) return ok(error(403))
         sidCounter++
         return ok(success(JSONObject().put("sid", "SID$sidCounter").put("did", "DEVICE")))
     }

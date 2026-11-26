@@ -35,6 +35,8 @@ fun LoginScreen(
     initialUrl: String,
     initialAccount: String,
     initialInsecure: Boolean,
+    /** Mot de passe déjà enregistré : le champ peut rester vide (il suffit alors du code OTP, ou de réessayer). */
+    savedPassword: Boolean,
     onLogin: (url: String, account: String, password: String, insecure: Boolean, otp: String?) -> Unit,
     onConfirmCertificate: () -> Unit,
     onRejectCertificate: () -> Unit,
@@ -83,6 +85,7 @@ fun LoginScreen(
             value = password,
             onValueChange = { password = it },
             label = { Text("Mot de passe") },
+            placeholder = { if (savedPassword) Text("Enregistré : laisse vide pour le garder") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -129,7 +132,7 @@ fun LoginScreen(
         Spacer(Modifier.height(20.dp))
         Button(
             onClick = { onLogin(url, account, password, insecure, otp.ifBlank { null }) },
-            enabled = url.isNotBlank() && account.isNotBlank() && password.isNotEmpty(),
+            enabled = url.isNotBlank() && account.isNotBlank() && (password.isNotEmpty() || savedPassword),
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Se connecter") }
     }
