@@ -151,6 +151,27 @@ class CoverSourceTest {
         assertEquals(1, access.restores)
     }
 
+    @Test fun nasInjoignableOnNeRetentePasTout() {
+        val client = connectedClient()
+        server.shutdown() // NAS hors d'atteinte (hors du réseau local)
+        var lookups = 0
+        val access = object : SessionAccess {
+            override fun current(): SynoClient { lookups++; return client }
+            override fun restore(): SynoClient? = null
+            override fun renew(client: SynoClient) = Unit
+            override fun owner() = "nas|maxime"
+        }
+        val src = source(access)
+        assertNull(src.open(CoverRequest.Song("music_1", null)))
+        assertEquals(1, lookups)
+        // Pendant 30 s, les autres pochettes échouent tout de suite, sans tentative réseau.
+        assertNull(src.open(CoverRequest.Song("music_2", null)))
+        assertEquals(1, lookups)
+        now += 31_000
+        assertNull(src.open(CoverRequest.Song("music_3", null)))
+        assertEquals(2, lookups)
+    }
+
     @Test fun lesDemandesHostilesSontRefusees() {
         val params = mapOf("id" to "../../x", "k" to "../../../etc/passwd")
         assertNull(CoverRequest.parse("song", params::get))

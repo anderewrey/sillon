@@ -9,6 +9,7 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 
 /**
  * Pochette demandée par une adresse `content://` (voir `CoverProvider`). Ces adresses sortent de l'application
@@ -83,30 +84,46 @@ class SessionGate(
     private val access: SessionAccess,
     private val clock: () -> Long = System::currentTimeMillis,
     private val backoffMs: Long = 60_000,
+    private val waitMs: Long = 3_000,
 ) {
+    private val lock = ReentrantLock()
     private var failedAt: Long? = null
 
     private fun inBackoff(): Boolean = failedAt?.let { clock() - it < backoffMs } ?: false
 
-    @Synchronized
+    /**
+     * Les appels arrivent sur les fils Binder du fournisseur : on n'attend pas indéfiniment qu'un autre fil
+     * finisse sa reconnexion (NAS injoignable = délais longs). Après [waitMs], on renonce : pas de pochette.
+     */
+    private inline fun <T> guarded(block: () -> T?): T? {
+        if (!lock.tryLock(waitMs, TimeUnit.MILLISECONDS)) return null
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
     fun client(): SynoClient? {
         access.current()?.let { return it }
-        if (inBackoff()) return null
-        return access.restore().also { failedAt = if (it == null) clock() else null }
+        return guarded {
+            access.current() ?: if (inBackoff()) null else access.restore().also { failedAt = if (it == null) clock() else null }
+        }
     }
 
     /** Appelé quand le NAS a refusé [staleSid]. Si un autre fil a déjà renouvelé la session, on la réutilise. */
-    @Synchronized
-    fun renew(client: SynoClient, staleSid: String?): SynoClient? {
-        if (client.sid != staleSid) return client
-        if (inBackoff()) return null
-        return try {
-            access.renew(client)
-            failedAt = null
-            client
-        } catch (_: Exception) {
-            failedAt = clock()
-            null
+    fun renew(client: SynoClient, staleSid: String?): SynoClient? = guarded {
+        when {
+            client.sid != staleSid -> client
+            inBackoff() -> null
+            else -> try {
+                access.renew(client)
+                failedAt = null
+                client
+            } catch (_: Exception) {
+                failedAt = clock()
+                null
+            }
         }
     }
 }
@@ -125,10 +142,15 @@ class CoverSource(
     private val cacheCapBytes: Long = 50L * 1024 * 1024,
     private val timeoutSeconds: Long = 10,
     maxConcurrentFetches: Int = 4,
+    private val waitMs: Long = 3_000,
+    private val unreachableMs: Long = 30_000,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val fetches = Semaphore(maxConcurrentFetches)
     private val locks = ConcurrentHashMap<String, Any>()
+
+    /** Après une erreur réseau (NAS injoignable, hors du réseau local), on ne retente pas avant cette heure. */
+    @Volatile private var unreachableUntil = 0L
 
     /** Le fichier de la pochette, ou null si elle est introuvable (réseau absent, pas de pochette, refus du NAS). */
     fun open(request: CoverRequest): File? {
@@ -138,7 +160,9 @@ class CoverSource(
         // Tous les titres d'un album partagent la même adresse : une seule requête au NAS pour eux tous.
         synchronized(locks.computeIfAbsent(name) { Any() }) {
             cached(name)?.let { return it }
-            fetches.acquire()
+            if (clock() < unreachableUntil) return null
+            // Fils Binder : attente bornée si d'autres pochettes sont déjà en cours de chargement.
+            if (!fetches.tryAcquire(waitMs, TimeUnit.MILLISECONDS)) return null
             try {
                 return fetch(request, name)
             } finally {
@@ -199,6 +223,7 @@ class CoverSource(
                 }
             }
         } catch (_: IOException) {
+            unreachableUntil = clock() + unreachableMs
             Outcome.Failed
         }
     }
