@@ -3,6 +3,7 @@ package io.github.inobody92.sillon.playback
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Process
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -567,7 +568,7 @@ class PlaybackService : MediaLibraryService() {
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>,
-        ): ListenableFuture<MutableList<MediaItem>> = scope.future { resolve(mediaItems).toMutableList() }
+        ): ListenableFuture<MutableList<MediaItem>> = scope.future { resolve(mediaItems, isSelf(controller)).toMutableList() }
 
         override fun onSetMediaItems(
             mediaSession: MediaSession,
@@ -586,7 +587,7 @@ class PlaybackService : MediaLibraryService() {
                     return@future MediaSession.MediaItemsWithStartPosition(siblings, index, startPositionMs)
                 }
             }
-            val resolved = resolve(mediaItems)
+            val resolved = resolve(mediaItems, isSelf(controller))
             val start = if (resolved.size == mediaItems.size) startIndex else 0
             MediaSession.MediaItemsWithStartPosition(
                 resolved,
@@ -596,11 +597,22 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    /** Remplace les éléments « sans adresse » (identifiants de conteneurs, requêtes vocales) par de vrais titres. */
-    private suspend fun resolve(items: List<MediaItem>): List<MediaItem> {
+    /**
+     * L'appelant est Sillon lui-même. Décidé par l'UID, fourni par Android : le nom de paquet d'un contrôleur
+     * Media3 est déclaré par l'appelant lui-même et peut être falsifié.
+     */
+    private fun isSelf(controller: MediaSession.ControllerInfo): Boolean = controller.uid == Process.myUid()
+
+    /**
+     * Remplace les éléments « sans adresse » (identifiants de conteneurs, requêtes vocales) par de vrais titres.
+     * Les éléments venus d'une autre application ([fromSelf] faux) sont toujours reconstruits depuis leur identifiant :
+     * leur adresse et leurs métadonnées sont ignorées (sinon le lecteur téléchargerait n'importe quelle URL avec le
+     * client du NAS).
+     */
+    private suspend fun resolve(items: List<MediaItem>, fromSelf: Boolean): List<MediaItem> {
         val out = mutableListOf<MediaItem>()
         for (item in items) {
-            if (item.localConfiguration != null) {
+            if (fromSelf && item.localConfiguration != null) {
                 out += item
                 continue
             }
