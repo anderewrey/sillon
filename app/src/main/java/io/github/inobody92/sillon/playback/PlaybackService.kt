@@ -31,6 +31,7 @@ import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionCommands
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
@@ -467,9 +468,21 @@ class PlaybackService : MediaLibraryService() {
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): MediaSession.ConnectionResult {
-            // Observation : qui se connecte réellement (téléphone, voiture, montre), avant de restreindre quoi que ce soit.
             val caller = callers.classify(controller)
             Log.i(TAG_CALLERS, "connexion de ${controller.packageName} (uid ${controller.uid}) : $caller")
+            if (caller == CallerClass.UNKNOWN) {
+                // Application inconnue : commandes de lecture seulement (lecture, pause, suivant, volume…).
+                // Ni parcours de la bibliothèque, ni ajout à la file, ni « j'aime ». Jamais de refus complet :
+                // un contrôleur légitime mais imprévu (accessoire, montre d'une autre marque) garde l'essentiel.
+                val playback = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
+                    .remove(Player.COMMAND_SET_MEDIA_ITEM)
+                    .remove(Player.COMMAND_CHANGE_MEDIA_ITEMS)
+                    .build()
+                return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                    .setAvailableSessionCommands(SessionCommands.EMPTY)
+                    .setAvailablePlayerCommands(playback)
+                    .build()
+            }
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
                 .add(LIKE_COMMAND)
                 .add(SLEEP_COMMAND)
